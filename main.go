@@ -15,7 +15,7 @@ import (
 	"fmt"
 )
 
-var partitions int = 6
+var partitions int = 7
 var count int64
 var oldCount int64
 var addressesMap map[string]float64 = make(map[string]float64)
@@ -129,5 +129,5 @@ func incrementPrivKey(privKey []byte) {
 }
 
 func convertToPrivateKey(privKey []byte) (*ecdsa.PrivateKey) {
-	return crypto.ToECDSA(privKey)
+	return crypto.ToECDSAUnsafe(privKey)
 }

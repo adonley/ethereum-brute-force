@@ -11,19 +11,35 @@ import (
 	"io"
 	"time"
 	"sync"
-	"strconv"
 	"fmt"
+	"github.com/parnurzeal/gorequest"
+	"encoding/json"
+	"strconv"
+	"runtime"
 )
 
-var partitions int = 7
+type concurrentMap struct {
+	sync.Mutex
+	addresses map[string]bool
+}
+
+var partitions = int(7)
 var count int64
 var oldCount int64
-var addressesMap map[string]float64 = make(map[string]float64)
+var addressesMap = concurrentMap { addresses: make(map[string]bool), }
+var provider = "http://localhost:8546"
+var semaphoreChan = make(chan int, 50)
+var goRequest = gorequest.New()
 
 func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU() + 1)
+
 	count = int64(0)
 
-	loadAddresses()
+	currentBlock := getBlockNumber()
+	processedBlocks := loadAddresses()
+
+	updateAddressList(processedBlocks, currentBlock)
 
 	value, _ := time.ParseDuration("1s")
 	checkTimer := time.NewTimer(value)
@@ -31,7 +47,7 @@ func main() {
 		for {
 			select {
 			case <-checkTimer.C:
-				log.Printf("Checked: %d, Speed: %d per second", count, count - oldCount)
+				log.Printf("Checked: %d, Speed: %d per second", count, count-oldCount)
 				oldCount = count
 				checkTimer.Reset(value)
 			}
@@ -48,9 +64,130 @@ func main() {
 	wg.Wait()
 }
 
-func loadAddresses() {
+func getBlockNumber() int64 {
+	var requestBody = `{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":83}`
+
+	_, body, errs := goRequest.Post(provider).
+		Send(requestBody).
+		End()
+	if errs != nil {
+		fmt.Println(errs)
+		os.Exit(1)
+	}
+
+	var raw map[string]interface{}
+
+	err :=  json.Unmarshal([]byte(body), &raw)
+	if err != nil {
+		panic(err)
+	}
+
+	resultString := raw["result"].(string)
+	blockNum, err := strconv.ParseInt(resultString[2:], 16, 64)
+	if err != nil {
+		panic(err)
+	}
+	return blockNum
+}
+
+func getBlock(blockNumber int64) []string {
+	var requestBody = `{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x` + fmt.Sprintf("%x", blockNumber)  + `", true],"id":1}`
+	var addressList []string
+	var failed = true
+
+	for failed {
+		var goreq = gorequest.New()
+		goreq.
+			Post(provider).
+			Send(requestBody).
+			End(func(resp gorequest.Response, body string, errs []error) {
+			if errs != nil {
+				log.Print(errs)
+				return
+			} else {
+				failed = false
+			}
+
+			var raw map[string]interface{}
+
+			err :=  json.Unmarshal([]byte(body), &raw)
+			if err != nil {
+				log.Panic(err)
+			}
+
+			// Get the miner of the block
+			addressList = append(addressList, raw["result"].(map[string]interface{})["miner"].(string))
+
+			// Get the addresses of the transactions
+			transactions := raw["result"].(map[string]interface{})["transactions"]
+			for _, transaction := range transactions.([]interface{}) {
+				if val, ok := transaction.(map[string]interface{})["to"].(string); ok {
+					addressList = append(addressList, val)
+				}
+				if val, ok := transaction.(map[string]interface{})["from"].(string); ok {
+					addressList = append(addressList, val)
+				}
+			}
+		})
+
+
+	}
+
+	// TODO: Uncles
+
+	return addressList
+}
+
+func updateAddressList(processedBlocks, currentBlock int64) {
+	var wg sync.WaitGroup
+
+	for i := processedBlocks; i < currentBlock; i++  {
+		wg.Add(1)
+		semaphoreChan <- 1
+		go func () {
+			defer func() {
+				// Release a slot
+				<-semaphoreChan
+			}()
+			addressesList := getBlock(i)
+
+			addressesMap.Lock()
+			// Can this fail within this loop?
+			for _, address := range addressesList {
+				addressesMap.addresses[address] = true
+			}
+			addressesMap.Unlock()
+
+			if i % 10 == 0 {
+				log.Print("Gathering addresses from block: ", i)
+			}
+			wg.Done()
+		} ()
+	}
+
+	wg.Wait()
+
+	f, err := os.OpenFile("./balances.csv", os.O_WRONLY, 0600)
+	defer f.Close()
+
+	if err != nil {
+		log.Panic(err)
+	}
+
+	f.WriteString(strconv.FormatInt(currentBlock,10) + "\n")
+
+	addressesMap.Lock()
+	for k := range addressesMap.addresses {
+		f.WriteString(k + "\n")
+	}
+	addressesMap.Unlock()
+}
+
+func loadAddresses() int64 {
+	processedBlocks := int64(0)
 	count := int64(0)
 	f, _ := os.Open("./balances.csv")
+	defer f.Close()
 
 	r := csv.NewReader(bufio.NewReader(f))
 	first := true
@@ -62,22 +199,23 @@ func loadAddresses() {
 		}
 
 		if first {
+			processedBlocks, err = strconv.ParseInt(record[0], 10, 64)
+			if err != nil {
+				log.Panic(err)
+			}
 			first = !first
 			continue
 		}
 
 		count++
 
-		if string(record[2]) == "False" {
-			val, err := strconv.ParseFloat(record[1], 64)
-			if err != nil {
-				log.Printf("Error parsing: %s - %v", record[1], err.Error())
-				continue
-			}
-			addressesMap[record[0]] = val
-		}
+		addressesMap.Lock()
+		addressesMap.addresses[record[0]] = true
+		addressesMap.Unlock()
 	}
 	log.Printf("Number of addresses loaded: %d", count)
+
+	return processedBlocks
 }
 
 func generateSeedAddress() []byte {
@@ -93,10 +231,12 @@ func generateAddresses(seedPrivKey []byte) {
 		incrementPrivKey(seedPrivKey)
 		priv := convertToPrivateKey(seedPrivKey)
 		address := crypto.PubkeyToAddress(priv.PublicKey)
-		if amount, ok := addressesMap[address.Hex()]; ok {
+		addressesMap.Lock()
+		if amount, ok := addressesMap.addresses[address.Hex()]; ok {
 			log.Printf("Found address with ETH balance, priv: %s, addr: %s, ammount %v", priv.D, address.Hex(), amount)
 			writeToFound(fmt.Sprintf("Private: %s, Address: %s, Balance: %v\n", priv.D, address.Hex(), amount))
 		}
+		addressesMap.Unlock()
 		count++
 	}
 }
@@ -107,6 +247,7 @@ func writeToFound(text string) {
 		_, _ = os.Create(foundFileName)
 	}
 	f, err := os.OpenFile(foundFileName, os.O_APPEND|os.O_WRONLY, os.ModeAppend)
+	defer f.Close()
 	if err != nil {
 		log.Printf(err.Error())
 	}
@@ -114,12 +255,11 @@ func writeToFound(text string) {
 	if err != nil {
 		log.Printf(err.Error())
 	}
-	f.Close()
 }
 
 func incrementPrivKey(privKey []byte) {
 	for i := 31; i > 0; i-- {
-		if privKey[i] + 1 == 255 {
+		if privKey[i]+1 == 255 {
 			privKey[i] = 0
 		} else {
 			privKey[i] += 1

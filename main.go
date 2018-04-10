@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"runtime"
+	"flag"
 )
 
 type concurrentMap struct {
@@ -27,19 +28,25 @@ var partitions = int(7)
 var count int64
 var oldCount int64
 var addressesMap = concurrentMap { addresses: make(map[string]bool), }
-var provider = "http://localhost:8546"
-var semaphoreChan = make(chan int, 50)
+var provider string
+var shouldUpdate bool
+var semaphoreChan = make(chan int, 5)
 var goRequest = gorequest.New()
 
 func main() {
+
+	processFlags()
+
 	runtime.GOMAXPROCS(runtime.NumCPU() + 1)
 
 	count = int64(0)
 
-	currentBlock := getBlockNumber()
 	processedBlocks := loadAddresses()
 
-	updateAddressList(processedBlocks, currentBlock)
+	if shouldUpdate {
+		updateAddressList(processedBlocks)
+	}
+
 
 	value, _ := time.ParseDuration("1s")
 	checkTimer := time.NewTimer(value)
@@ -62,6 +69,11 @@ func main() {
 		go generateAddresses(addr)
 	}
 	wg.Wait()
+}
+
+func processFlags() {
+	shouldUpdate = *flag.Bool("update", false, "a boolean on whether or not to update the list of addresses.")
+	provider = *flag.String("provider", "http://localhost:8545", "http location of an ethereum node to use updating the address list")
 }
 
 func getBlockNumber() int64 {
@@ -138,7 +150,9 @@ func getBlock(blockNumber int64) []string {
 	return addressList
 }
 
-func updateAddressList(processedBlocks, currentBlock int64) {
+func updateAddressList(processedBlocks int64) {
+	currentBlock := getBlockNumber()
+	log.Print("Using {} to get new addresses", provider)
 	var wg sync.WaitGroup
 
 	for i := processedBlocks; i < currentBlock; i++  {
@@ -158,7 +172,7 @@ func updateAddressList(processedBlocks, currentBlock int64) {
 			}
 			addressesMap.Unlock()
 
-			if i % 10 == 0 {
+			if i % 100 == 0 {
 				log.Print("Gathering addresses from block: ", i)
 			}
 			wg.Done()

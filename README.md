@@ -11,7 +11,7 @@ go run main.go [--update=<boolean>] [--provider=<node location>]
 
 use the `-provider` flag to overwrite the default node location `http://localhost:8545` when updating the list of addresses. This doesn't work against infura as I didn't implement any retry mechanism in the case of failure.
 
-When running with the provided blances.csv, it'll take a little bit to get started up as there are ~27 million addresses in that list.
+When running with the provided `blances.csv` (located in the releases section), it'll take a little bit to get started up as there are ~27 million addresses in that list.
 
 ### About
 

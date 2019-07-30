@@ -1,22 +1,22 @@
 package main
 
 import (
-	"crypto/ecdsa"
-	"github.com/ethereum/go-ethereum/crypto"
-	"log"
-	"os"
-	"encoding/csv"
 	"bufio"
-	"math/rand"
-	"io"
-	"time"
-	"sync"
-	"fmt"
-	"github.com/parnurzeal/gorequest"
+	"crypto/ecdsa"
+	"encoding/csv"
 	"encoding/json"
-	"strconv"
-	"runtime"
 	"flag"
+	"fmt"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/parnurzeal/gorequest"
+	"io"
+	"log"
+	"math/rand"
+	"os"
+	"runtime"
+	"strconv"
+	"sync"
+	"time"
 )
 
 type concurrentMap struct {
@@ -100,54 +100,6 @@ func getBlockNumber() int64 {
 		panic(err)
 	}
 	return blockNum
-}
-
-func getBlock(blockNumber int64) []string {
-	var requestBody = `{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x` + fmt.Sprintf("%x", blockNumber)  + `", true],"id":1}`
-	var addressList []string
-	var failed = true
-
-	for failed {
-		var goreq = gorequest.New()
-		goreq.
-			Post(provider).
-			Send(requestBody).
-			End(func(resp gorequest.Response, body string, errs []error) {
-			if errs != nil {
-				log.Print(errs)
-				return
-			} else {
-				failed = false
-			}
-
-			var raw map[string]interface{}
-
-			err :=  json.Unmarshal([]byte(body), &raw)
-			if err != nil {
-				log.Panic(err)
-			}
-
-			// Get the miner of the block
-			addressList = append(addressList, raw["result"].(map[string]interface{})["miner"].(string))
-
-			// Get the addresses of the transactions
-			transactions := raw["result"].(map[string]interface{})["transactions"]
-			for _, transaction := range transactions.([]interface{}) {
-				if val, ok := transaction.(map[string]interface{})["to"].(string); ok {
-					addressList = append(addressList, val)
-				}
-				if val, ok := transaction.(map[string]interface{})["from"].(string); ok {
-					addressList = append(addressList, val)
-				}
-			}
-		})
-
-
-	}
-
-	// TODO: Uncles
-
-	return addressList
 }
 
 func updateAddressList(processedBlocks int64) {
@@ -282,6 +234,6 @@ func incrementPrivKey(privKey []byte) {
 	}
 }
 
-func convertToPrivateKey(privKey []byte) (*ecdsa.PrivateKey) {
+func convertToPrivateKey(privKey []byte) *ecdsa.PrivateKey {
 	return crypto.ToECDSAUnsafe(privKey)
 }

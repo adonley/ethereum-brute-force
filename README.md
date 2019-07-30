@@ -23,7 +23,9 @@ docker-compose up
 
 This is a proof of concept - the actual probability of finding a private key in use is about 30000000 / 115792089237316195423570985008687907853269984665640564039457584007913129639936. Even at millions of privatekeys a second, it will be a very long time before you will likely find anything. Though, I'll admit that there is some fun in leaving it running.
 
-I didn't look into receipts for token transaction addresses.
+Some things have changed since when I first wrote this. Google now has an open dataset containing the whole Ethereum block chain. This
+is what I used to get the addresses dataset. You can find the query I used in the file `bigquery` included in this project. The size
+of these files are now massive.
 
 May number gods smile upon you.
 

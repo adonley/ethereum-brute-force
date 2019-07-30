@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"github.com/ethereum/go-ethereum/crypto"
 	"io"
+	"io/ioutil"
 	"log"
 	"math/rand"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -19,25 +21,26 @@ type concurrentMap struct {
 	addresses map[string]bool
 }
 
+var path = "addresses"
 var partitions = 7
 var count int64
 var oldCount int64
 var addressesMap = concurrentMap { addresses: make(map[string]bool), }
 
 func main() {
-	runtime.GOMAXPROCS(runtime.NumCPU() + 1)
+	runtime.GOMAXPROCS(runtime.NumCPU() - 1)
 
 	count = int64(0)
 
 	loadAddresses()
 
-	value, _ := time.ParseDuration("1s")
+	value, _ := time.ParseDuration("5s")
 	checkTimer := time.NewTimer(value)
 	go func() {
 		for {
 			select {
 			case <-checkTimer.C:
-				log.Printf("Checked: %d, Speed: %d per second", count, count-oldCount)
+				log.Printf("Checked: %d, Speed: %d per second", count, count - oldCount)
 				oldCount = count
 				checkTimer.Reset(value)
 			}
@@ -57,36 +60,45 @@ func main() {
 func loadAddresses() {
 	count := int64(0)
 
-	// TODO: Enumerate the csv files in - maybe we pull this in from the ENV for kubes?
-	f, _ := os.Open("./balances.csv")
+	// TODO: Maybe we pull this in from the ENV for kubes?
+	files, err := ioutil.ReadDir(path)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for _, f := range files {
+
+		if strings.HasSuffix(f.Name(), "csv") {
+			log.Printf("Processing csv: %s\n", f.Name())
+			c, _ := os.Open(path + string(os.PathSeparator) + f.Name())
+			r := csv.NewReader(bufio.NewReader(c))
+			for {
+				record, err := r.Read()
+				if err == io.EOF {
+					break
+				}
+				count++
+
+				addressesMap.addresses[record[0]] = true
+			}
+			if err = c.Close(); err != nil {
+				log.Fatal(err)
+			}
+		}
+
+	}
+
+	f, err := os.OpenFile(path + string(os.PathSeparator) + "balances.csv", os.O_CREATE | os.O_WRONLY, 0600)
 	defer f.Close()
 
-	r := csv.NewReader(bufio.NewReader(f))
-	for {
-		record, err := r.Read()
-		if err == io.EOF {
-			break
-		}
-		count++
-
-		// Why did I lock this?
-		// addressesMap.Lock()
-		addressesMap.addresses[record[0]] = true
-		//addressesMap.Unlock()
-
-		//f, err := os.OpenFile("./balances.csv", os.O_WRONLY, 0600)
-		//defer f.Close()
-		//
-		//if err != nil {
-		//	log.Panic(err)
-		//}
-		//
-		//addressesMap.Lock()
-		//for k := range addressesMap.addresses {
-		//	f.WriteString(k + "\n")
-		//}
-		//addressesMap.Unlock()
+	if err != nil {
+		log.Panic(err)
 	}
+
+	for k := range addressesMap.addresses {
+		f.WriteString(k + "\n")
+	}
+
 	log.Printf("Number of addresses loaded: %d", count)
 }
 
@@ -116,7 +128,7 @@ func generateAddresses(seedPrivKey []byte) {
 
 		addressesMap.Lock()
 		// Check to see if we have an address with a balance --
-		if ok := addressesMap.addresses[address.Hex()]; ok {
+		if ok := addressesMap.addresses[strings.ToLower(address.Hex())]; ok {
 			log.Printf("Found address with ETH balance, priv: %s, addr: %s", priv.D, address.Hex())
 			writeToFound(fmt.Sprintf("Private: %s, Address: %s\n", priv.D, address.Hex()))
 		}
@@ -127,7 +139,7 @@ func generateAddresses(seedPrivKey []byte) {
 
 func writeToFound(text string) {
 	// TODO: Again ENV variable of where to store? Would like this to be kubes compat
-	foundFileName := "./found.txt"
+	foundFileName := path + string(os.PathSeparator) + "found.txt"
 	if _, err := os.Stat(foundFileName); os.IsNotExist(err) {
 		_, _ = os.Create(foundFileName)
 	}

@@ -2,19 +2,14 @@ package main
 
 import (
 	"bufio"
-	"crypto/ecdsa"
 	"encoding/csv"
-	"encoding/json"
-	"flag"
 	"fmt"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/parnurzeal/gorequest"
 	"io"
 	"log"
 	"math/rand"
 	"os"
 	"runtime"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -24,29 +19,17 @@ type concurrentMap struct {
 	addresses map[string]bool
 }
 
-var partitions = int(7)
+var partitions = 7
 var count int64
 var oldCount int64
 var addressesMap = concurrentMap { addresses: make(map[string]bool), }
-var provider string
-var shouldUpdate bool
-var semaphoreChan = make(chan int, 5)
-var goRequest = gorequest.New()
 
 func main() {
-
-	processFlags()
-
 	runtime.GOMAXPROCS(runtime.NumCPU() + 1)
 
 	count = int64(0)
 
-	processedBlocks := loadAddresses()
-
-	if shouldUpdate {
-		updateAddressList(processedBlocks)
-	}
-
+	loadAddresses()
 
 	value, _ := time.ParseDuration("1s")
 	checkTimer := time.NewTimer(value)
@@ -71,117 +54,40 @@ func main() {
 	wg.Wait()
 }
 
-func processFlags() {
-	shouldUpdate = *flag.Bool("update", false, "a boolean on whether or not to update the list of addresses.")
-	provider = *flag.String("provider", "http://localhost:8545", "http location of an ethereum node to use updating the address list")
-}
-
-func getBlockNumber() int64 {
-	var requestBody = `{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":83}`
-
-	_, body, errs := goRequest.Post(provider).
-		Send(requestBody).
-		End()
-	if errs != nil {
-		fmt.Println(errs)
-		os.Exit(1)
-	}
-
-	var raw map[string]interface{}
-
-	err :=  json.Unmarshal([]byte(body), &raw)
-	if err != nil {
-		panic(err)
-	}
-
-	resultString := raw["result"].(string)
-	blockNum, err := strconv.ParseInt(resultString[2:], 16, 64)
-	if err != nil {
-		panic(err)
-	}
-	return blockNum
-}
-
-func updateAddressList(processedBlocks int64) {
-	currentBlock := getBlockNumber()
-	log.Print("Using {} to get new addresses", provider)
-	var wg sync.WaitGroup
-
-	for i := processedBlocks; i < currentBlock; i++  {
-		wg.Add(1)
-		semaphoreChan <- 1
-		go func () {
-			defer func() {
-				// Release a slot
-				<-semaphoreChan
-			}()
-			addressesList := getBlock(i)
-
-			addressesMap.Lock()
-			// Can this fail within this loop?
-			for _, address := range addressesList {
-				addressesMap.addresses[address] = true
-			}
-			addressesMap.Unlock()
-
-			if i % 100 == 0 {
-				log.Print("Gathering addresses from block: ", i)
-			}
-			wg.Done()
-		} ()
-	}
-
-	wg.Wait()
-
-	f, err := os.OpenFile("./balances.csv", os.O_WRONLY, 0600)
-	defer f.Close()
-
-	if err != nil {
-		log.Panic(err)
-	}
-
-	f.WriteString(strconv.FormatInt(currentBlock,10) + "\n")
-
-	addressesMap.Lock()
-	for k := range addressesMap.addresses {
-		f.WriteString(k + "\n")
-	}
-	addressesMap.Unlock()
-}
-
-func loadAddresses() int64 {
-	processedBlocks := int64(0)
+func loadAddresses() {
 	count := int64(0)
+
+	// TODO: Enumerate the csv files in - maybe we pull this in from the ENV for kubes?
 	f, _ := os.Open("./balances.csv")
 	defer f.Close()
 
 	r := csv.NewReader(bufio.NewReader(f))
-	first := true
 	for {
 		record, err := r.Read()
-
 		if err == io.EOF {
 			break
 		}
-
-		if first {
-			processedBlocks, err = strconv.ParseInt(record[0], 10, 64)
-			if err != nil {
-				log.Panic(err)
-			}
-			first = !first
-			continue
-		}
-
 		count++
 
-		addressesMap.Lock()
+		// Why did I lock this?
+		// addressesMap.Lock()
 		addressesMap.addresses[record[0]] = true
-		addressesMap.Unlock()
+		//addressesMap.Unlock()
+
+		//f, err := os.OpenFile("./balances.csv", os.O_WRONLY, 0600)
+		//defer f.Close()
+		//
+		//if err != nil {
+		//	log.Panic(err)
+		//}
+		//
+		//addressesMap.Lock()
+		//for k := range addressesMap.addresses {
+		//	f.WriteString(k + "\n")
+		//}
+		//addressesMap.Unlock()
 	}
 	log.Printf("Number of addresses loaded: %d", count)
-
-	return processedBlocks
 }
 
 func generateSeedAddress() []byte {
@@ -194,13 +100,25 @@ func generateSeedAddress() []byte {
 
 func generateAddresses(seedPrivKey []byte) {
 	for ; ; {
-		incrementPrivKey(seedPrivKey)
-		priv := convertToPrivateKey(seedPrivKey)
+		// Move backward through those bytes
+		for i := 31; i > 0; i-- {
+			if seedPrivKey[i] + 1 == 255 {
+				seedPrivKey[i] = 0
+			} else {
+				seedPrivKey[i] += 1
+				break
+			}
+		}
+
+		// If this could be more optimized, this is where we'd get the most speed-up
+		priv := crypto.ToECDSAUnsafe(seedPrivKey)
 		address := crypto.PubkeyToAddress(priv.PublicKey)
+
 		addressesMap.Lock()
-		if amount, ok := addressesMap.addresses[address.Hex()]; ok {
-			log.Printf("Found address with ETH balance, priv: %s, addr: %s, ammount %v", priv.D, address.Hex(), amount)
-			writeToFound(fmt.Sprintf("Private: %s, Address: %s, Balance: %v\n", priv.D, address.Hex(), amount))
+		// Check to see if we have an address with a balance --
+		if ok := addressesMap.addresses[address.Hex()]; ok {
+			log.Printf("Found address with ETH balance, priv: %s, addr: %s", priv.D, address.Hex())
+			writeToFound(fmt.Sprintf("Private: %s, Address: %s\n", priv.D, address.Hex()))
 		}
 		addressesMap.Unlock()
 		count++
@@ -208,6 +126,7 @@ func generateAddresses(seedPrivKey []byte) {
 }
 
 func writeToFound(text string) {
+	// TODO: Again ENV variable of where to store? Would like this to be kubes compat
 	foundFileName := "./found.txt"
 	if _, err := os.Stat(foundFileName); os.IsNotExist(err) {
 		_, _ = os.Create(foundFileName)
@@ -221,19 +140,4 @@ func writeToFound(text string) {
 	if err != nil {
 		log.Printf(err.Error())
 	}
-}
-
-func incrementPrivKey(privKey []byte) {
-	for i := 31; i > 0; i-- {
-		if privKey[i]+1 == 255 {
-			privKey[i] = 0
-		} else {
-			privKey[i] += 1
-			break
-		}
-	}
-}
-
-func convertToPrivateKey(privKey []byte) *ecdsa.PrivateKey {
-	return crypto.ToECDSAUnsafe(privKey)
 }

@@ -13,12 +13,15 @@ main () {
 			echo "Downloading part$i.gz";
 			wget https://storage.googleapis.com/ethereum-addresses/addresses00000000000$i -O addresses/part$i.gz;
 		fi
+
 		# Unzip if doesn't exist
 		if [ ! -f "addresses/part$i.csv" ]; then
 			echo "Decompressing part$i.csv";
 			gunzip -c addresses/part$i.gz > addresses/part$i.csv;
-                fi
+    fi
 	done
+
+	printf "Done grabbing address files.\n";
 }
 
 main;

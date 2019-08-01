@@ -1,0 +1,6 @@
+version: '3'
+services:
+  worker:
+    build: .
+    volumes:
+      - ./addresses:/addresses

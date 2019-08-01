@@ -1,0 +1,24 @@
+#standardSQL
+with double_entry_book as (
+    select to_address as address
+    from `bigquery-public-data.crypto_ethereum.traces`
+    where to_address is not null
+    and status = 1
+    and (call_type not in ('delegatecall', 'callcode', 'staticcall') or call_type is null)
+    union all
+    select from_address as address
+    from `bigquery-public-data.crypto_ethereum.traces`
+    where from_address is not null
+    and status = 1
+    and (call_type not in ('delegatecall', 'callcode', 'staticcall') or call_type is null)
+    union all
+    select miner as address
+    from `bigquery-public-data.crypto_ethereum.transactions` as transactions
+    join `bigquery-public-data.crypto_ethereum.blocks` as blocks on blocks.number = transactions.block_number
+    group by blocks.miner
+    union all
+    select from_address as address
+    from `bigquery-public-data.crypto_ethereum.transactions`
+)
+select address
+from double_entry_book

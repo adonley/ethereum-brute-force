@@ -10,13 +10,14 @@ Run the get addresses script to download all the ethereum addresses (this will t
 ```
 
 ### Usage
+With golang installed;
+```
+go run main.go
+```
+
+The docker-compose is a work in progress (it's loading addresses too slow at the moment);
 ```
 docker-compose up
-```
-
-### Scaling
-```
-
 ```
 
 ### About
@@ -25,7 +26,7 @@ This is a proof of concept - the actual probability of finding a private key in 
 
 Some things have changed since when I first wrote this. Google now has an open dataset containing the whole Ethereum block chain. This
 is what I used to get the addresses dataset. You can find the query I used in the file `bigquery` included in this project. The size
-of these files are now massive.
+of the addresses file is at least double.
 
 May number gods smile upon you.
 

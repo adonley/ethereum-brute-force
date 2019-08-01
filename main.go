@@ -33,7 +33,7 @@ func main() {
 
 	loadAddresses()
 
-	value, _ := time.ParseDuration("5s")
+	value, _ := time.ParseDuration("1s")
 	checkTimer := time.NewTimer(value)
 	go func() {
 		for {
@@ -58,8 +58,9 @@ func main() {
 
 func loadAddresses() {
 	count := int64(0)
-
-	c, _ := os.Open(path + string(os.PathSeparator) + "addresses.csv")
+	addressPath := path + string(os.PathSeparator) + "addresses.csv"
+	log.Printf("Loading addresses from '%s'\n", addressPath)
+	c, _ := os.Open(addressPath)
 	r := csv.NewReader(bufio.NewReader(c))
 	for {
 		record, err := r.Read()
@@ -67,14 +68,12 @@ func loadAddresses() {
 			break
 		}
 		count++
-
 		addressesMap.addresses[record[0]] = true
 	}
 	if err := c.Close(); err != nil {
 		log.Fatal(err)
 	}
-
-	log.Printf("Number of addresses loaded: %d", count)
+	log.Printf("Loaded %d addresses.\n", count)
 }
 
 func generateSeedAddress() []byte {

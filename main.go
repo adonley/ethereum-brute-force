@@ -68,6 +68,9 @@ func loadAddresses() {
 			break
 		}
 		count++
+		if count % 1000000000 == 0 {
+			log.Printf("Loaded %d\n", count)
+		}
 		addressesMap.addresses[record[0]] = true
 	}
 	if err := c.Close(); err != nil {

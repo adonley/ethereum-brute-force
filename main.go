@@ -80,6 +80,7 @@ func loadAddresses() {
 }
 
 func generateSeedAddress() []byte {
+	rand.Seed(time.Now().UTC().UnixNano())
 	privKey := make([]byte, 32)
 	for i := 0; i < 32; i++ {
 		privKey[i] = byte(rand.Intn(256))
